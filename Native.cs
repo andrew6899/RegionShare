@@ -15,6 +15,12 @@ static class Native
     public const uint MOD_ALT = 1, MOD_CONTROL = 2, MOD_SHIFT = 4, MOD_NOREPEAT = 0x4000;
     public const int VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
 
+    public static readonly IntPtr HWND_BROADCAST = new(0xFFFF);
+    public const int ERROR_HOTKEY_ALREADY_REGISTERED = 1409;
+
+    /// Posted by a second instance to ask the running one to open the region picker.
+    public static readonly uint WM_SHOW_PICKER = RegisterWindowMessage("RegionShare.ShowPicker.v1");
+
     public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
     public const uint GA_ROOT = 2;
     public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
@@ -42,7 +48,9 @@ static class Native
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rc);
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
-    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint mods, uint vk);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint mods, uint vk);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterWindowMessage(string name);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
     [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);

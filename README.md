@@ -15,12 +15,24 @@ pixels. So Region Share does keep a window that mirrors the region on the GPU, b
 off-screen**, past the right edge of the desktop. Windows Graphics Capture (what Teams uses) reads a window's
 composited surface regardless of where it is, so Teams captures it fine while you never see it.
 
-Verified on a 5120×1440 setup: the parked window is capturable, updates live, and shows up in a Chromium
-share picker with a proper thumbnail. See `--grab` below to check the same thing on another machine.
+Verified in a real Teams meeting on a 5120×1440 setup: the parked window is targetable, updates live, and
+shows a correct thumbnail in the share picker. See `--grab` below to check the same on another machine.
 
 ## Using it
 
-Run `RegionShare.exe`. It lives in the tray (green-square icon). First run opens the region picker.
+Run `RegionShare.exe`. It lives in the tray (green-square icon) and shows a balloon on every launch
+reminding you of the hotkeys. First run opens the region picker.
+
+**Getting back to it.** The shared window is deliberately invisible, so there are three ways in — any of
+them works, use whichever you remember:
+
+- **Ctrl+Alt+R** — opens the region picker from anywhere.
+- **Run `RegionShare.exe` again** — it doesn't start a second copy; it tells the running one to open the picker.
+- **The tray icon** — right-click for the full menu, double-click to pick a region.
+
+> Windows 11 hides new tray icons behind the **^** chevron at the left of the clock. To pin it where you can
+> see it, open the chevron and drag the green Region Share icon down onto the taskbar (or Settings →
+> Personalization → Taskbar → Other system tray icons → Region Share → On).
 
 | Action | How |
 |---|---|
@@ -33,8 +45,15 @@ Run `RegionShare.exe`. It lives in the tray (green-square icon). First run opens
 | Peek at what Teams sees | **Ctrl+Alt+P** brings the mirror on-screen next to the region; Esc or the same key parks it again |
 | Everything else | Right-click the tray icon |
 
-Hotkeys are global. If one is already taken by another program it's skipped (noted in the log) and the
-tray menu still does everything.
+Verified working in a real Teams meeting: window targetable, region live in Teams' own share preview,
+including mouse interaction and dragging windows into the region.
+
+Hotkeys are global. If another program already owns one, Region Share says so in a startup balloon and
+names the casualties; the tray menu still does everything. (`Ctrl+Alt+M` is commonly taken.)
+
+Only one copy runs at a time — a second launch just re-opens the picker. This matters: two copies would
+both register the name "Region Share" in Teams' window list, and whichever started first would own all the
+hotkeys, leaving the other mute.
 
 **In Teams:** Share → *Window* → **Region Share**.
 
@@ -72,7 +91,7 @@ Self-contained single exe (nothing to install on the target machine):
 dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
-Output: `publish\RegionShare.exe` (~75 MB — it carries the .NET runtime).
+Output: `publish\RegionShare.exe` (~70 MB — it carries the .NET runtime).
 
 ## Code map
 
@@ -86,3 +105,7 @@ Output: `publish\RegionShare.exe` (~75 MB — it carries the .NET runtime).
 | `CaptureInterop.cs` | COM glue between WinRT capture and D3D11 |
 | `GrabTool.cs` | The `--grab` diagnostic |
 | `Native.cs`, `AppIcon.cs`, `Settings.cs`, `Log.cs` | Win32 declarations, runtime-drawn icon, `%AppData%\RegionShare\` |
+
+## License
+
+[MIT](LICENSE) © 2026 andrew6899

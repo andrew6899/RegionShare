@@ -29,6 +29,8 @@ sealed class ViewerForm : Form
     IntPtr _hmon;
     long _lastFrame;
     bool _preview;            // false = parked off-screen, true = shown on-screen so you can see what Teams sees
+    bool _picking;            // region picker is open (guards re-entry from a hotkey or a second instance)
+    readonly List<string> _deadKeys = new();
 
     bool Live => _capture != null && !_region.IsEmpty;
 
@@ -79,15 +81,25 @@ sealed class ViewerForm : Form
             return;
         }
         await RequestBorderlessAsync();
-        if (_s.RegionW > 0 && _s.RegionH > 0)
+        if (_s.RegionW > 0 && _s.RegionH > 0) ApplyRegion(_s.Region);
+        Announce();
+        if (_region.IsEmpty) SelectRegion();
+    }
+
+    /// The shared window is invisible, so say out loud — every launch — how to get back to it.
+    void Announce()
+    {
+        if (_deadKeys.Count > 0)
         {
-            ApplyRegion(_s.Region);
+            _tray.ShowBalloonTip(15000, "Region Share — some hotkeys are taken",
+                $"Another app already owns {string.Join(", ", _deadKeys)}. Use the tray icon's right-click menu instead, " +
+                "or re-run RegionShare.exe to re-open the region picker.", ToolTipIcon.Warning);
         }
         else
         {
-            _tray.ShowBalloonTip(8000, "Region Share",
-                "Running in the tray. Press Ctrl+Alt+R at any time to choose the part of the screen to share.", ToolTipIcon.Info);
-            SelectRegion();
+            _tray.ShowBalloonTip(10000, "Region Share is running",
+                "Ctrl+Alt+R changes the region · Ctrl+Alt+P shows what Teams sees. " +
+                "Everything is on this tray icon's right-click menu.", ToolTipIcon.Info);
         }
     }
 
@@ -138,6 +150,7 @@ sealed class ViewerForm : Form
 
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == WM_SHOW_PICKER) { SelectRegion(); return; }   // a second instance asking us to show ourselves
         switch (m.Msg)
         {
             case WM_HOTKEY:
@@ -217,13 +230,19 @@ sealed class ViewerForm : Form
 
     void SelectRegion()
     {
-        var hmon = MonitorAt(CursorPos());
-        var mb = MonitorBounds(hmon);
-        _frame.Visible = false;
-        using var picker = new RegionPickerForm(mb, !_region.IsEmpty && mb.Contains(_region.Location) ? _region : null);
-        picker.ShowDialog();
-        if (picker.Result is Rectangle r) ApplyRegion(r);
-        else if (!_region.IsEmpty) _frame.Visible = _s.ShowFrame;
+        if (_picking) return;
+        _picking = true;
+        try
+        {
+            var hmon = MonitorAt(CursorPos());
+            var mb = MonitorBounds(hmon);
+            _frame.Visible = false;
+            using var picker = new RegionPickerForm(mb, !_region.IsEmpty && mb.Contains(_region.Location) ? _region : null);
+            picker.ShowDialog();
+            if (picker.Result is Rectangle r) ApplyRegion(r);
+            else if (!_region.IsEmpty) _frame.Visible = _s.ShowFrame;
+        }
+        finally { _picking = false; }
     }
 
     void CenterOnMouse()
@@ -306,7 +325,12 @@ sealed class ViewerForm : Form
         if (_preview && !_region.IsEmpty && IsHandleCreated && WindowBounds(Handle).IntersectsWith(_region))
             t = "⚠ Preview overlaps the shared region  —  " + t;
         if (Text != t) Text = t;
-        if (_tray != null) _tray.Text = t.Length > 63 ? t[..63] : t;
+
+        // NotifyIcon.Text caps at 63 chars, so spend them on the way back in rather than on the title.
+        string tip = _region.IsEmpty ? "Region Share — no region set" : $"Region Share · {_region.Width}×{_region.Height}";
+        if (!_deadKeys.Contains("Ctrl+Alt+R")) tip += " — Ctrl+Alt+R to change";
+        else tip += " — right-click for options";
+        if (_tray != null) _tray.Text = tip.Length > 63 ? tip[..63] : tip;
     }
 
     // ---------------- hotkeys ----------------
@@ -314,22 +338,28 @@ sealed class ViewerForm : Form
     void RegisterHotkeys()
     {
         uint ca = MOD_CONTROL | MOD_ALT, cas = ca | MOD_SHIFT;
-        Reg(HkSelect, ca | MOD_NOREPEAT, 'R');
-        Reg(HkCenter, ca | MOD_NOREPEAT, 'M');
-        Reg(HkSnap, ca | MOD_NOREPEAT, 'W');
-        Reg(HkSnapSize, cas | MOD_NOREPEAT, 'W');
-        Reg(HkFrame, ca | MOD_NOREPEAT, 'B');
-        Reg(HkPreview, ca | MOD_NOREPEAT, 'P');
+        Reg(HkSelect, ca | MOD_NOREPEAT, 'R', "Ctrl+Alt+R");
+        Reg(HkCenter, ca | MOD_NOREPEAT, 'M', "Ctrl+Alt+M");
+        Reg(HkSnap, ca | MOD_NOREPEAT, 'W', "Ctrl+Alt+W");
+        Reg(HkSnapSize, cas | MOD_NOREPEAT, 'W', "Ctrl+Alt+Shift+W");
+        Reg(HkFrame, ca | MOD_NOREPEAT, 'B', "Ctrl+Alt+B");
+        Reg(HkPreview, ca | MOD_NOREPEAT, 'P', "Ctrl+Alt+P");
         for (int i = 0; i < 4; i++)
         {
-            Reg(HkNudge + i, ca, NudgeKeys[i]);
-            Reg(HkNudge + 4 + i, cas, NudgeKeys[i]);
+            Reg(HkNudge + i, ca, NudgeKeys[i], null);
+            Reg(HkNudge + 4 + i, cas, NudgeKeys[i], null);
         }
+        if (_deadKeys.Count > 0) Log.Info("hotkeys unavailable: " + string.Join(", ", _deadKeys));
     }
 
-    void Reg(int id, uint mods, int vk)
+    /// name == null for the arrow-key hotkeys, which aren't worth naming individually in a warning.
+    void Reg(int id, uint mods, int vk, string? name)
     {
-        if (!RegisterHotKey(Handle, id, mods, (uint)vk)) Log.Info($"hotkey {id} (vk 0x{vk:X}) already taken by another app");
+        if (RegisterHotKey(Handle, id, mods, (uint)vk)) return;
+        int err = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+        Log.Info($"hotkey {id} (vk 0x{vk:X}) failed: " +
+                 (err == ERROR_HOTKEY_ALREADY_REGISTERED ? "already owned by another app" : $"win32 error {err}"));
+        if (name != null) _deadKeys.Add(name);
     }
 
     void OnHotkey(int id)
@@ -370,7 +400,8 @@ sealed class ViewerForm : Form
             return mi;
         }
 
-        Add("Select region…", SelectRegion, "Ctrl+Alt+R");
+        var select = Add("Select region…", SelectRegion, "Ctrl+Alt+R");
+        select.Font = new Font(select.Font, FontStyle.Bold);   // the default action, and what double-clicking the tray does
         Add("Move region to mouse", CenterOnMouse, "Ctrl+Alt+M");
         Add("Snap region to window under mouse", () => SnapToWindow(false), "Ctrl+Alt+W");
         Add("Match window under mouse (size too)", () => SnapToWindow(true), "Ctrl+Alt+Shift+W");
