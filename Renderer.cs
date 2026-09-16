@@ -47,14 +47,16 @@ sealed class Renderer : IDisposable
             Format = Format.B8G8R8A8_UNorm,
             SampleDescription = new SampleDescription(1, 0),
             BufferUsage = Usage.RenderTargetOutput,
-            BufferCount = 2,
+            BufferCount = 3,
             Scaling = Scaling.Stretch,
             SwapEffect = SwapEffect.FlipDiscard,
             AlphaMode = Vortice.DXGI.AlphaMode.Ignore,
         };
         _swap = factory.CreateSwapChainForHwnd(Device, hwnd, desc);
         factory.MakeWindowAssociation(hwnd, WindowAssociationFlags.IgnoreAll);
-        using (var dxgiDevice1 = Device.QueryInterface<IDXGIDevice1>()) dxgiDevice1.MaximumFrameLatency = 1;
+        // 2, not 1: a single-frame latency limit makes Present block on the previous frame often enough
+        // to stall the capture thread. One extra frame of latency is invisible next to Teams' own encode.
+        using (var dxgiDevice1 = Device.QueryInterface<IDXGIDevice1>()) dxgiDevice1.MaximumFrameLatency = 2;
 
         _d2dFactory = D2D1.D2D1CreateFactory<ID2D1Factory1>(FactoryType.MultiThreaded);
         _d2dDevice = _d2dFactory.CreateDevice(dxgiDevice);
@@ -110,17 +112,18 @@ sealed class Renderer : IDisposable
     }
 
     /// Crops (rx, ry, regionW, regionH) out of the monitor frame and presents it, letterboxed, in the window.
-    public void Render(ID3D11Texture2D frame, int rx, int ry)
+    /// Returns false if the frame could not be presented (the swap chain was still busy with the previous one).
+    public bool Render(ID3D11Texture2D frame, int rx, int ry)
     {
         lock (_gate)
         {
-            if (_target == null || _regionTex == null || _regionBmp == null) return;
+            if (_target == null || _regionTex == null || _regionBmp == null) return false;
 
             var fd = frame.Description;
             var rd = _regionTex.Description;
             int x0 = Math.Clamp(rx, 0, (int)fd.Width), y0 = Math.Clamp(ry, 0, (int)fd.Height);
             int x1 = Math.Clamp(rx + (int)rd.Width, 0, (int)fd.Width), y1 = Math.Clamp(ry + (int)rd.Height, 0, (int)fd.Height);
-            if (x1 <= x0 || y1 <= y0) return;
+            if (x1 <= x0 || y1 <= y0) return false;
             _ctx.CopySubresourceRegion(_regionTex, 0, 0, 0, 0, frame, 0, new Box(x0, y0, 0, x1, y1, 1));
 
             float rw = rd.Width, rh = rd.Height;
@@ -134,10 +137,13 @@ sealed class Renderer : IDisposable
             _d2d.DrawBitmap(_regionBmp, dest, 1f, mode, null, null);
             _d2d.EndDraw();
 
-            // No vsync wait and never block: the window is normally parked off-screen, and if the compositor
-            // ever stops consuming frames we'd rather drop one than stall the capture thread.
-            var hr = _swap.Present(0, PresentFlags.DoNotWait);
-            if (hr.Failure && hr.Code != unchecked((int)0x887A000A) /* DXGI_ERROR_WAS_STILL_DRAWING */) Log.Info("Present: " + hr);
+            // No vsync wait — the capture already arrives at the compositor's cadence, so waiting on vblank
+            // here would only add latency. Don't pass DoNotWait: it makes DXGI discard the frame outright
+            // whenever the queue is momentarily busy, which reads as stutter in the shared stream.
+            var hr = _swap.Present(0, PresentFlags.None);
+            if (hr.Code == unchecked((int)0x887A000A) /* DXGI_ERROR_WAS_STILL_DRAWING */) return false;
+            if (hr.Failure) Log.Info("Present: " + hr);
+            return true;
         }
     }
 

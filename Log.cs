@@ -7,6 +7,8 @@ static class Log
     static readonly string File = Path.Combine(Dir, "log.txt");
     static readonly object Gate = new();
 
+    const long MaxBytes = 1_000_000;
+
     public static void Info(string message)
     {
         try
@@ -14,6 +16,13 @@ static class Log
             lock (Gate)
             {
                 Directory.CreateDirectory(Dir);
+                // Frame stats land here every 10 s while sharing, so keep the file from growing forever.
+                var fi = new FileInfo(File);
+                if (fi.Exists && fi.Length > MaxBytes)
+                {
+                    var keep = System.IO.File.ReadLines(File).Skip(200).ToArray();
+                    System.IO.File.WriteAllLines(File, keep);
+                }
                 System.IO.File.AppendAllText(File, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}{Environment.NewLine}");
             }
         }

@@ -76,6 +76,25 @@ RegionShare.exe --grab "Region Share" C:\temp\grab.png
 While Region Share is running, this captures its (parked) window the same way Teams does and writes
 `grab.png` plus `grab.png.txt` with a verdict: *live and updating*, *static*, or *not capturable*.
 
+## If motion looks choppy to viewers
+
+While a region is live, `%AppData%\RegionShare\log.txt` gets a frame-pacing line every 10 seconds:
+
+```
+frames: 59.6/s in, 59.6/s out, dropped 0 throttle + 0 busy, gap avg 16.8 ms (min 15.0, max 20.7)
+```
+
+`in` is what the compositor handed us, `out` is what reached the shared window. Those should be nearly
+equal and the gap should be steady — a steady 16.7 ms is a smooth 60 fps. If `out` is well below `in`, or
+the gap alternates between roughly 16 and 33 ms, frames are being dropped locally; try *Max frame rate →
+Unlimited* in the tray menu. If `in` and `out` agree and viewers still see stutter, the loss is downstream
+in Teams' encoder or the network, not here.
+
+**A note on laptops with two GPUs:** Region Share deliberately runs on whichever GPU drives the display —
+the integrated one on most laptops. That's the GPU the desktop compositor already lives on, so the crop is
+a local copy. Forcing it onto a discrete GPU would push every frame across PCIe and back and make it
+slower, so seeing no activity on the discrete GPU is correct.
+
 ## Building
 
 Requires the .NET 8 SDK (or newer — .NET 9/10 SDKs build this fine) and Windows 10 2004+.

@@ -32,7 +32,8 @@ sealed class MonitorCapture : IDisposable
         _device = CaptureInterop.CreateWinRtDevice(d3d);
         _item = CaptureInterop.CreateItemForMonitor(hmon);
         _size = _item.Size;
-        _pool = Direct3D11CaptureFramePool.CreateFreeThreaded(_device, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _size);
+        // 3 buffers: 2 leaves no slack, so a frame that takes slightly long to process costs the next one.
+        _pool = Direct3D11CaptureFramePool.CreateFreeThreaded(_device, DirectXPixelFormat.B8G8R8A8UIntNormalized, 3, _size);
         _pool.FrameArrived += OnFrame;
         _session = _pool.CreateCaptureSession(_item);
         SetCursor(captureCursor);

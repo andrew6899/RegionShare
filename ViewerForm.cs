@@ -31,6 +31,7 @@ sealed class ViewerForm : Form
     bool _preview;            // false = parked off-screen, true = shown on-screen so you can see what Teams sees
     bool _picking;            // region picker is open (guards re-entry from a hotkey or a second instance)
     readonly List<string> _deadKeys = new();
+    readonly FrameStats _stats = new();
 
     bool Live => _capture != null && !_region.IsEmpty;
 
@@ -207,14 +208,26 @@ sealed class ViewerForm : Form
 
     void OnFrame(ID3D11Texture2D tex)
     {
+        _stats.Arrived();
         if (_s.MaxFps > 0)
         {
             long now = Stopwatch.GetTimestamp();
-            if (now - _lastFrame < Stopwatch.Frequency / _s.MaxFps) return;
+            // 10% tolerance. Capture arrives at the display's cadence with a little jitter, so testing
+            // against the exact interval rejects every frame that lands a hair early — which on a 60 Hz
+            // screen with a 60 fps cap throws away roughly every other frame and looks like stutter.
+            long minGap = (long)(Stopwatch.Frequency / (double)_s.MaxFps * 0.9);
+            if (now - _lastFrame < minGap) { _stats.Throttled(); _stats.MaybeLog(); return; }
             _lastFrame = now;
         }
+
         var region = _region; var mon = _monBounds;
-        _renderer?.Render(tex, region.X - mon.X, region.Y - mon.Y);
+        var renderer = _renderer;
+        if (renderer != null)
+        {
+            if (renderer.Render(tex, region.X - mon.X, region.Y - mon.Y)) _stats.Presented();
+            else _stats.Busy();
+        }
+        _stats.MaybeLog();
     }
 
     static Rectangle ClampToMonitor(Rectangle r, out IntPtr hmon, out Rectangle mb)
